@@ -170,6 +170,21 @@ class AICR_Settings {
             <h1><?php esc_html_e( 'AI Content Rewriter', 'ai-content-rewriter' ); ?></h1>
             <p><?php esc_html_e( 'Configure your Anthropic API credentials and rewriting prompts. Per-post-type prompts are appended to the global prompt.', 'ai-content-rewriter' ); ?></p>
 
+            <?php
+            $check_url = wp_nonce_url(
+                admin_url( 'admin-post.php?action=aicr_check_updates' ),
+                'aicr_check_updates'
+            );
+            ?>
+            <p class="aicr-version-row">
+                <strong><?php esc_html_e( 'Plugin version:', 'ai-content-rewriter' ); ?></strong>
+                <code><?php echo esc_html( AICR_VERSION ); ?></code>
+                &nbsp;
+                <a class="button button-secondary" href="<?php echo esc_url( $check_url ); ?>">
+                    <?php esc_html_e( 'Check for updates', 'ai-content-rewriter' ); ?>
+                </a>
+            </p>
+
             <form method="post" action="options.php">
                 <?php settings_fields( 'aicr_settings_group' ); ?>
 

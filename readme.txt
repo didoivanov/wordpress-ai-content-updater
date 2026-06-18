@@ -4,7 +4,7 @@ Tags: ai, anthropic, claude, content, rewriter, acf
 Requires at least: 6.0
 Tested up to: 6.6
 Requires PHP: 7.4
-Stable tag: 0.4.0
+Stable tag: 0.4.1
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -25,6 +25,11 @@ Rewrite WordPress pages, posts and custom post types (including ACF Pro flexible
 3. Visit Settings → AI Content Rewriter and add your Anthropic API key.
 
 == Changelog ==
+
+= 0.4.1 =
+* New: "Check for updates" link on the Plugins screen (action links + row meta).
+* New: "Check for updates" button on the Configuration page, next to the version number.
+* New: Admin notice confirms whether you are up to date, an update is available, or the check failed.
 
 = 0.4.0 =
 * Fix: "Empty response from Anthropic (stop_reason: max_tokens)" error on long fields.
