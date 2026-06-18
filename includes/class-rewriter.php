@@ -188,8 +188,9 @@ class AICR_Rewriter {
     }
 
     /**
-     * Send the payload to Claude, get rewritten values, and return a preview array
-     * keyed by item id => rewritten value.
+     * Send each field to Claude in its own request (using tool-use for guaranteed structured output)
+     * and assemble a preview map. Per-field calls eliminate the giant-JSON-roundtrip class of
+     * parsing failures, especially with Gutenberg / ACF HTML.
      */
     public function generate_preview( $post_id, $field_selection = null, $extra_instructions = '' ) {
         $post = get_post( $post_id );
@@ -202,47 +203,18 @@ class AICR_Rewriter {
         }
 
         $opts   = $this->settings->get();
-        $system = $opts['system_prompt'] . "\n\nYou will receive a JSON document with an 'items' array. Each item has an 'id', a 'format' ('text' or 'html'), and a 'value'. Rewrite ONLY the 'value' for each item according to the user instructions, preserving the original 'format' (keep HTML tags intact when format is 'html'). Return ONLY a JSON object of the form {\"items\":[{\"id\":\"...\",\"value\":\"...\"}, ...]} containing every id from the input. Do not add commentary.";
+        $system = $opts['system_prompt'];
 
         $user_prompt = $this->settings->get_prompt_for_type( $post->post_type );
         if ( $extra_instructions ) {
             $user_prompt .= "\n\n--- ADDITIONAL INSTRUCTIONS ---\n" . $extra_instructions;
         }
 
-        // Build a compact JSON to send.
-        $compact = [ 'items' => [] ];
-        foreach ( $payload['items'] as $item ) {
-            $compact['items'][] = [
-                'id'     => $item['id'],
-                'label'  => $item['label'],
-                'format' => $item['format'],
-                'value'  => $item['value'],
-            ];
-        }
-
-        $json_payload = wp_json_encode( $compact, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES );
-        $resp = $this->client->rewrite( $system, $user_prompt, $json_payload );
-        if ( empty( $resp['ok'] ) ) {
-            return [ 'ok' => false, 'error' => isset( $resp['error'] ) ? $resp['error'] : 'Unknown error' ];
-        }
-
-        $parsed = $this->parse_response( $resp['text'] );
-        if ( empty( $parsed ) ) {
-            return [ 'ok' => false, 'error' => __( 'Could not parse model response as JSON.', 'ai-content-rewriter' ), 'raw' => $resp['text'] ];
-        }
-
-        // Build a preview map keyed by id, but only for ids that existed in the input.
-        $valid_ids = wp_list_pluck( $payload['items'], 'id' );
         $preview   = [];
-        foreach ( $parsed as $row ) {
-            if ( ! is_array( $row ) || empty( $row['id'] ) ) { continue; }
-            if ( ! in_array( $row['id'], $valid_ids, true ) ) { continue; }
-            $preview[ $row['id'] ] = isset( $row['value'] ) ? (string) $row['value'] : '';
-        }
-
-        // Originals indexed by id, for the diff UI.
         $originals = [];
         $meta      = [];
+        $errors    = [];
+
         foreach ( $payload['items'] as $item ) {
             $originals[ $item['id'] ] = $item['value'];
             $meta[ $item['id'] ] = [
@@ -250,6 +222,29 @@ class AICR_Rewriter {
                 'format' => $item['format'],
                 'origin' => $item['origin'],
             ];
+
+            $resp = $this->client->rewrite_field(
+                $system,
+                $user_prompt,
+                $item['label'],
+                $item['format'],
+                $item['value']
+            );
+
+            if ( empty( $resp['ok'] ) ) {
+                $errors[ $item['id'] ] = isset( $resp['error'] ) ? $resp['error'] : 'Unknown error';
+                // Fall back to original so the UI still shows the field with a notice.
+                $preview[ $item['id'] ] = $item['value'];
+                continue;
+            }
+            $preview[ $item['id'] ] = $resp['text'];
+        }
+
+        // If every single field failed, surface the first error.
+        $all_failed = count( $errors ) === count( $payload['items'] );
+        if ( $all_failed ) {
+            $first_err = $errors ? reset( $errors ) : __( 'No preview generated.', 'ai-content-rewriter' );
+            return [ 'ok' => false, 'error' => $first_err ];
         }
 
         return [
@@ -257,24 +252,8 @@ class AICR_Rewriter {
             'preview'   => $preview,
             'originals' => $originals,
             'meta'      => $meta,
+            'errors'    => $errors,
         ];
-    }
-
-    private function parse_response( $text ) {
-        $text = trim( $text );
-        // Try direct JSON parse first.
-        $decoded = json_decode( $text, true );
-        if ( is_array( $decoded ) && isset( $decoded['items'] ) && is_array( $decoded['items'] ) ) {
-            return $decoded['items'];
-        }
-        // Try to extract first {...} block.
-        if ( preg_match( '/\{.*\}/s', $text, $m ) ) {
-            $decoded = json_decode( $m[0], true );
-            if ( is_array( $decoded ) && isset( $decoded['items'] ) && is_array( $decoded['items'] ) ) {
-                return $decoded['items'];
-            }
-        }
-        return [];
     }
 
     /**

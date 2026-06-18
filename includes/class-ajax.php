@@ -88,6 +88,7 @@ class AICR_Ajax {
         ], HOUR_IN_SECONDS );
 
         // Build payload for UI.
+        $errors = isset( $result['errors'] ) && is_array( $result['errors'] ) ? $result['errors'] : [];
         $ui = [];
         foreach ( $result['meta'] as $id => $m ) {
             $ui[] = [
@@ -96,6 +97,7 @@ class AICR_Ajax {
                 'format'    => $m['format'],
                 'original'  => isset( $result['originals'][ $id ] ) ? $result['originals'][ $id ] : '',
                 'rewritten' => isset( $result['preview'][ $id ] ) ? $result['preview'][ $id ] : '',
+                'error'     => isset( $errors[ $id ] ) ? $errors[ $id ] : '',
             ];
         }
 

@@ -17,46 +17,72 @@ class AICR_Anthropic_Client {
     }
 
     /**
-     * Send a single rewrite request.
+     * Rewrite a SINGLE field using tool-use for guaranteed structured output.
+     * This is dramatically more reliable than asking Claude to return JSON in plain text,
+     * especially with HTML-heavy Gutenberg / ACF content.
      *
-     * @param string $system   System prompt.
-     * @param string $prompt   User instructions.
-     * @param string $payload  The actual content to rewrite (will be passed as the user message body).
+     * @param string $system  System prompt.
+     * @param string $prompt  User instructions (global + per-type + extra).
+     * @param string $label   Human-readable field label (for prompt context).
+     * @param string $format  'text' or 'html'.
+     * @param string $value   The actual content to rewrite.
      * @return array{ok:bool,text?:string,error?:string,raw?:array}
      */
-    public function rewrite( $system, $prompt, $payload ) {
+    public function rewrite_field( $system, $prompt, $label, $format, $value ) {
         $opts = $this->settings->get();
         $api_key = isset( $opts['api_key'] ) ? trim( $opts['api_key'] ) : '';
         if ( '' === $api_key ) {
             return [ 'ok' => false, 'error' => __( 'Anthropic API key is not configured.', 'ai-content-rewriter' ) ];
         }
 
+        $format_note = ( 'html' === $format )
+            ? 'The content is HTML. Preserve ALL HTML tags, attributes, Gutenberg block comments (lines like <!-- wp:... --> and <!-- /wp:... -->), shortcodes, and overall structure exactly. Only change the human-readable text inside.'
+            : 'The content is plain text. Return plain text only.';
+
         $user_msg  = $prompt;
+        $user_msg .= "\n\nField label: " . $label;
+        $user_msg .= "\nFormat: " . $format;
+        $user_msg .= "\n\n" . $format_note;
+        $user_msg .= "\n\nCall the submit_rewrite tool with the rewritten content as the `value` parameter. Do not respond in plain text.";
         $user_msg .= "\n\n--- CONTENT TO REWRITE ---\n";
-        $user_msg .= $payload;
+        $user_msg .= $value;
         $user_msg .= "\n--- END CONTENT ---";
+
+        $tool = [
+            'name'         => 'submit_rewrite',
+            'description'  => 'Submit the rewritten field value. Always use this tool to return your output.',
+            'input_schema' => [
+                'type'       => 'object',
+                'properties' => [
+                    'value' => [
+                        'type'        => 'string',
+                        'description' => 'The rewritten content. For HTML format, include all original HTML tags and Gutenberg block markers verbatim, only changing text inside.',
+                    ],
+                ],
+                'required' => [ 'value' ],
+            ],
+        ];
 
         $body = [
             'model'       => $opts['model'],
             'max_tokens'  => (int) $opts['max_tokens'],
             'temperature' => (float) $opts['temperature'],
             'system'      => $system,
+            'tools'       => [ $tool ],
+            'tool_choice' => [ 'type' => 'tool', 'name' => 'submit_rewrite' ],
             'messages'    => [
-                [
-                    'role'    => 'user',
-                    'content' => $user_msg,
-                ],
+                [ 'role' => 'user', 'content' => $user_msg ],
             ],
         ];
 
         $response = wp_remote_post( self::API_URL, [
-            'timeout' => 90,
+            'timeout' => 180,
             'headers' => [
                 'x-api-key'         => $api_key,
                 'anthropic-version' => self::API_VERSION,
                 'content-type'      => 'application/json',
             ],
-            'body'    => wp_json_encode( $body ),
+            'body'    => wp_json_encode( $body, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES ),
         ] );
 
         if ( is_wp_error( $response ) ) {
@@ -77,17 +103,32 @@ class AICR_Anthropic_Client {
         $text = '';
         if ( is_array( $decoded ) && isset( $decoded['content'] ) && is_array( $decoded['content'] ) ) {
             foreach ( $decoded['content'] as $block ) {
-                if ( isset( $block['type'] ) && 'text' === $block['type'] && isset( $block['text'] ) ) {
-                    $text .= $block['text'];
+                if ( isset( $block['type'] ) && 'tool_use' === $block['type'] && isset( $block['input']['value'] ) ) {
+                    $text = (string) $block['input']['value'];
+                    break;
                 }
+            }
+            // Fallback: if the model returned plain text despite tool_choice, take it.
+            if ( '' === $text ) {
+                foreach ( $decoded['content'] as $block ) {
+                    if ( isset( $block['type'] ) && 'text' === $block['type'] && isset( $block['text'] ) ) {
+                        $text .= $block['text'];
+                    }
+                }
+                $text = $this->strip_code_fences( $text );
             }
         }
 
         if ( '' === $text ) {
-            return [ 'ok' => false, 'error' => __( 'Empty response from Anthropic.', 'ai-content-rewriter' ), 'raw' => $decoded ];
+            $stop = isset( $decoded['stop_reason'] ) ? $decoded['stop_reason'] : 'unknown';
+            return [
+                'ok'    => false,
+                'error' => sprintf( __( 'Empty response from Anthropic (stop_reason: %s). Try lowering input size or raising max tokens.', 'ai-content-rewriter' ), $stop ),
+                'raw'   => $decoded,
+            ];
         }
 
-        return [ 'ok' => true, 'text' => $this->strip_code_fences( $text ), 'raw' => $decoded ];
+        return [ 'ok' => true, 'text' => $text, 'raw' => $decoded ];
     }
 
     /**
@@ -126,7 +167,6 @@ class AICR_Anthropic_Client {
 
     private function strip_code_fences( $text ) {
         $text = trim( $text );
-        // Strip wrapping ```lang ... ``` if present.
         if ( preg_match( '/^```[a-zA-Z0-9_-]*\s*\n(.*)\n```\s*$/s', $text, $m ) ) {
             return trim( $m[1] );
         }

@@ -4,7 +4,7 @@ Tags: ai, anthropic, claude, content, rewriter, acf
 Requires at least: 6.0
 Tested up to: 6.6
 Requires PHP: 7.4
-Stable tag: 0.1.0
+Stable tag: 0.2.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -25,6 +25,14 @@ Rewrite WordPress pages, posts and custom post types (including ACF Pro flexible
 3. Visit Settings → AI Content Rewriter and add your Anthropic API key.
 
 == Changelog ==
+
+= 0.2.0 =
+* Fix: "Could not parse model response as JSON" error on Gutenberg/ACF HTML content.
+* Switched to Anthropic tool-use (structured output) so the model can no longer return malformed JSON or prose.
+* Per-field API calls: every selected field is rewritten in its own request, so one failure no longer breaks the whole batch.
+* UI: shows per-field error banner when a single field fails; other fields still apply.
+* Improved HTML prompting: explicit instruction to preserve Gutenberg block comments (<!-- wp:... -->).
+* Increased HTTP timeout to 180s for long content.
 
 = 0.1.0 =
 * Initial release.

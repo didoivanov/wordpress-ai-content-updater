@@ -104,11 +104,16 @@
                 return;
             }
             var html = items.map(function (it) {
+                var hasError = !!it.error;
+                var errBanner = hasError
+                    ? '<div class="aicr-field-error" style="background:#fcecec;border:1px solid #f4b6b6;color:#8a1f11;padding:6px 8px;border-radius:3px;margin-bottom:6px;">' + escapeHtml('Failed: ' + it.error) + '</div>'
+                    : '';
                 return '<div class="aicr-preview-item" data-id="' + escapeHtml(it.id) + '">'
                     + '<header>'
                     + '<h4>' + escapeHtml(it.label) + ' <small style="color:#888">[' + escapeHtml(it.format) + ']</small></h4>'
-                    + '<label class="aicr-approve"><input type="checkbox" class="aicr-approve-cb" checked /> Approve</label>'
+                    + '<label class="aicr-approve"><input type="checkbox" class="aicr-approve-cb"' + (hasError ? '' : ' checked') + ' /> Approve</label>'
                     + '</header>'
+                    + errBanner
                     + '<div class="aicr-preview-cols">'
                     + '<div class="aicr-preview-col"><h5>Original</h5><pre>' + escapeHtml(it.original) + '</pre></div>'
                     + '<div class="aicr-preview-col"><h5>Rewritten</h5><textarea class="aicr-rewritten">' + escapeHtml(it.rewritten) + '</textarea></div>'
