@@ -25,6 +25,8 @@ class AICR_Ajax {
         add_action( 'wp_ajax_aicr_apply',        [ $this, 'ajax_apply' ] );
         add_action( 'wp_ajax_aicr_test_key',     [ $this, 'ajax_test_key' ] );
         add_action( 'wp_ajax_aicr_check_update', [ $this, 'ajax_check_update' ] );
+        // SSE streaming endpoint for live progress.
+        add_action( 'admin_post_aicr_stream',    [ $this, 'sse_stream' ] );
     }
 
     private function verify( $cap = 'edit_posts', $post_id = 0 ) {
@@ -159,6 +161,82 @@ class AICR_Ajax {
             wp_send_json_error( [ 'message' => isset( $resp['error'] ) ? $resp['error'] : 'Error' ] );
         }
         wp_send_json_success( [ 'message' => __( 'Connection OK.', 'ai-content-rewriter' ) ] );
+    }
+
+    /**
+     * Server-Sent Events stream for the preview workflow.
+     * Emits step-by-step progress so the UI can show every status change.
+     *
+     * The browser uses fetch() with ReadableStream to consume this (EventSource
+     * cannot send POST + nonces nicely with cookies, so we use a chunked POST instead).
+     */
+    public function sse_stream() {
+        $post_id = isset( $_REQUEST['post_id'] ) ? (int) $_REQUEST['post_id'] : 0;
+        $nonce_ok = isset( $_REQUEST['nonce'] ) && wp_verify_nonce( wp_unslash( $_REQUEST['nonce'] ), 'aicr_nonce' );
+        if ( ! $nonce_ok || ! current_user_can( 'edit_post', $post_id ) ) {
+            status_header( 403 );
+            exit;
+        }
+
+        // Build common SSE headers.
+        nocache_headers();
+        header( 'Content-Type: text/event-stream; charset=utf-8' );
+        header( 'X-Accel-Buffering: no' ); // disable nginx proxy buffering
+        header( 'Cache-Control: no-cache, no-transform' );
+        @ini_set( 'output_buffering', 'off' );
+        @ini_set( 'zlib.output_compression', 0 );
+        @ini_set( 'implicit_flush', 1 );
+        while ( ob_get_level() > 0 ) { ob_end_flush(); }
+        ob_implicit_flush( true );
+
+        $extra = isset( $_REQUEST['extra'] ) ? wp_kses_post( wp_unslash( $_REQUEST['extra'] ) ) : '';
+        $selection = null;
+        if ( ! empty( $_REQUEST['fields'] ) ) {
+            $raw = wp_unslash( $_REQUEST['fields'] );
+            if ( is_array( $raw ) ) {
+                $selection = array_map( 'sanitize_text_field', $raw );
+            }
+        }
+
+        $emit = function ( $event, $data = [] ) {
+            if ( connection_aborted() ) { return; }
+            echo "event: " . $event . "\n";
+            echo "data: " . wp_json_encode( $data ) . "\n\n";
+            @flush();
+        };
+
+        $emit( 'status', [ 'message' => __( 'Starting...', 'ai-content-rewriter' ) ] );
+
+        $result = $this->rewriter->stream_preview( $post_id, $selection, $extra, $emit );
+
+        if ( ! empty( $result['ok'] ) ) {
+            // Cache the preview for apply step (same shape as ajax_preview did).
+            $key = 'aicr_pv_' . get_current_user_id() . '_' . $post_id;
+            set_transient( $key, [
+                'preview'   => $result['preview'],
+                'originals' => $result['originals'],
+                'meta'      => $result['meta'],
+                'ts'        => time(),
+            ], HOUR_IN_SECONDS );
+
+            $errors = isset( $result['errors'] ) && is_array( $result['errors'] ) ? $result['errors'] : [];
+            $ui = [];
+            foreach ( $result['meta'] as $id => $m ) {
+                $ui[] = [
+                    'id'        => $id,
+                    'label'     => $m['label'],
+                    'format'    => $m['format'],
+                    'original'  => isset( $result['originals'][ $id ] ) ? $result['originals'][ $id ] : '',
+                    'rewritten' => isset( $result['preview'][ $id ] ) ? $result['preview'][ $id ] : '',
+                    'error'     => isset( $errors[ $id ] ) ? $errors[ $id ] : '',
+                ];
+            }
+            $emit( 'done', [ 'items' => $ui, 'total_cost' => isset( $result['total_cost'] ) ? $result['total_cost'] : 0 ] );
+        }
+
+        echo "event: close\ndata: {}\n\n";
+        @flush();
+        exit;
     }
 
     public function ajax_check_update() {

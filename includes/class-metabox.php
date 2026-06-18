@@ -62,6 +62,13 @@ class AICR_MetaBox {
                 <div class="aicr-field-list"></div>
             </div>
 
+            <div class="aicr-log" hidden>
+                <header class="aicr-log-header">
+                    <strong><?php esc_html_e( 'Progress', 'ai-content-rewriter' ); ?></strong>
+                </header>
+                <div class="aicr-log-body" aria-live="polite"></div>
+            </div>
+
             <div class="aicr-preview" hidden>
                 <h3><?php esc_html_e( 'Preview', 'ai-content-rewriter' ); ?></h3>
                 <p class="description"><?php esc_html_e( 'Review each field. Approve the ones you want to write back, then click Apply. Original content remains until you save the post.', 'ai-content-rewriter' ); ?></p>

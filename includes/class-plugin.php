@@ -20,6 +20,8 @@ class AICR_Plugin {
     public $ajax;
     /** @var AICR_Updater */
     public $updater;
+    /** @var AICR_Admin */
+    public $admin;
 
     public static function instance() {
         if ( null === self::$instance ) {
@@ -31,14 +33,23 @@ class AICR_Plugin {
     public function init() {
         load_plugin_textdomain( 'ai-content-rewriter', false, dirname( AICR_BASENAME ) . '/languages' );
 
+        // Run lightweight DB schema upgrade if needed.
+        $installed = (string) get_option( 'aicr_db_version', '' );
+        if ( AICR_VERSION !== $installed ) {
+            AICR_Usage::install();
+            update_option( 'aicr_db_version', AICR_VERSION );
+        }
+
         $this->settings = new AICR_Settings();
         $this->client   = new AICR_Anthropic_Client( $this->settings );
         $this->rewriter = new AICR_Rewriter( $this->client, $this->settings );
         $this->metabox  = new AICR_MetaBox( $this->settings );
         $this->ajax     = new AICR_Ajax( $this->rewriter, $this->settings );
         $this->updater  = new AICR_Updater();
+        $this->admin    = new AICR_Admin( $this->settings );
 
         $this->settings->register();
+        $this->admin->register();
         $this->metabox->register();
         $this->ajax->register();
         $this->updater->register();
@@ -49,8 +60,9 @@ class AICR_Plugin {
     public function enqueue_admin_assets( $hook ) {
         $screen = function_exists( 'get_current_screen' ) ? get_current_screen() : null;
         $is_edit = $screen && in_array( $screen->base, [ 'post' ], true );
-        $is_settings = isset( $_GET['page'] ) && $_GET['page'] === AICR_SLUG;
-        if ( ! $is_edit && ! $is_settings ) {
+        $page = isset( $_GET['page'] ) ? sanitize_key( $_GET['page'] ) : '';
+        $is_aicr_page = in_array( $page, [ AICR_SLUG, AICR_SLUG . '-costs' ], true );
+        if ( ! $is_edit && ! $is_aicr_page ) {
             return;
         }
         wp_enqueue_style(
@@ -67,9 +79,10 @@ class AICR_Plugin {
             true
         );
         wp_localize_script( 'aicr-admin', 'AICR', [
-            'ajax_url' => admin_url( 'admin-ajax.php' ),
-            'nonce'    => wp_create_nonce( 'aicr_nonce' ),
-            'i18n'     => [
+            'ajax_url'   => admin_url( 'admin-ajax.php' ),
+            'stream_url' => admin_url( 'admin-post.php?action=aicr_stream' ),
+            'nonce'      => wp_create_nonce( 'aicr_nonce' ),
+            'i18n'       => [
                 'generating'        => __( 'Generating preview...', 'ai-content-rewriter' ),
                 'apply_confirm'     => __( 'Replace the current content with the rewritten preview? The original will be saved as a revision.', 'ai-content-rewriter' ),
                 'applied'           => __( 'Content applied. Remember to update the post.', 'ai-content-rewriter' ),
@@ -81,6 +94,8 @@ class AICR_Plugin {
     }
 
     public static function activate() {
+        AICR_Usage::install();
+        update_option( 'aicr_db_version', AICR_VERSION );
         // Default options.
         $defaults = AICR_Settings::default_options();
         $existing = get_option( AICR_Settings::OPTION_KEY );

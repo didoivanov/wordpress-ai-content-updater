@@ -29,3 +29,26 @@
 
 #aicr-test-result.is-error, #aicr-update-result.is-error { color: #b32d2e; }
 #aicr-test-result.is-success, #aicr-update-result.is-success { color: #1a7f37; }
+
+/* Progress log */
+.aicr-log { margin-top: 14px; border: 1px solid #d0d4da; border-radius: 4px; background: #0b1020; color: #d6deeb; }
+.aicr-log-header { padding: 6px 10px; background: #1a2238; color: #fff; border-radius: 4px 4px 0 0; font-size: 12px; letter-spacing: 0.04em; text-transform: uppercase; }
+.aicr-log-body { max-height: 260px; overflow: auto; padding: 8px 10px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; line-height: 1.55; }
+.aicr-log-line { white-space: pre-wrap; }
+.aicr-log-time { color: #7689a8; margin-right: 6px; }
+.aicr-log-meta { color: #82aaff; margin-left: 6px; }
+.aicr-log-info .aicr-log-msg { color: #d6deeb; }
+.aicr-log-step .aicr-log-msg { color: #ffcb6b; }
+.aicr-log-ok   .aicr-log-msg { color: #c3e88d; }
+.aicr-log-error .aicr-log-msg { color: #ff6b6b; }
+
+.aicr-field-error { background: #fcecec; border: 1px solid #f4b6b6; color: #8a1f11; padding: 6px 8px; border-radius: 3px; margin-bottom: 6px; }
+
+/* Costs page */
+.aicr-costs .aicr-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin: 16px 0 24px; }
+.aicr-costs .aicr-card { background: #fff; border: 1px solid #dcdcde; border-radius: 6px; padding: 14px 16px; box-shadow: 0 1px 0 rgba(0,0,0,.02); }
+.aicr-costs .aicr-card-label { color: #555; font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; }
+.aicr-costs .aicr-card-value { font-size: 28px; font-weight: 600; margin: 4px 0; color: #1d2327; }
+.aicr-costs .aicr-card-sub { color: #666; font-size: 12px; }
+.aicr-costs table th.num, .aicr-costs table td.num { text-align: right; font-variant-numeric: tabular-nums; }
+.aicr-costs h2 { margin-top: 28px; }

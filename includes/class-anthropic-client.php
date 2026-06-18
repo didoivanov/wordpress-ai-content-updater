@@ -119,16 +119,26 @@ class AICR_Anthropic_Client {
             }
         }
 
+        $usage = isset( $decoded['usage'] ) && is_array( $decoded['usage'] ) ? $decoded['usage'] : [];
+        $usage_norm = [
+            'input_tokens'          => isset( $usage['input_tokens'] ) ? (int) $usage['input_tokens'] : 0,
+            'output_tokens'         => isset( $usage['output_tokens'] ) ? (int) $usage['output_tokens'] : 0,
+            'cache_creation_tokens' => isset( $usage['cache_creation_input_tokens'] ) ? (int) $usage['cache_creation_input_tokens'] : 0,
+            'cache_read_tokens'     => isset( $usage['cache_read_input_tokens'] ) ? (int) $usage['cache_read_input_tokens'] : 0,
+        ];
+
         if ( '' === $text ) {
             $stop = isset( $decoded['stop_reason'] ) ? $decoded['stop_reason'] : 'unknown';
             return [
                 'ok'    => false,
                 'error' => sprintf( __( 'Empty response from Anthropic (stop_reason: %s). Try lowering input size or raising max tokens.', 'ai-content-rewriter' ), $stop ),
                 'raw'   => $decoded,
+                'usage' => $usage_norm,
+                'model' => $opts['model'],
             ];
         }
 
-        return [ 'ok' => true, 'text' => $text, 'raw' => $decoded ];
+        return [ 'ok' => true, 'text' => $text, 'raw' => $decoded, 'usage' => $usage_norm, 'model' => $opts['model'] ];
     }
 
     /**

@@ -26,22 +26,12 @@ class AICR_Settings {
             'rewrite_excerpt'  => 0,
             'rewrite_acf'      => 1,
             'acf_field_types'  => [ 'text', 'textarea', 'wysiwyg' ],
+            'prices'           => AICR_Usage::default_prices(),
         ];
     }
 
     public function register() {
-        add_action( 'admin_menu', [ $this, 'add_menu' ] );
         add_action( 'admin_init', [ $this, 'register_settings' ] );
-    }
-
-    public function add_menu() {
-        add_options_page(
-            __( 'AI Content Rewriter', 'ai-content-rewriter' ),
-            __( 'AI Content Rewriter', 'ai-content-rewriter' ),
-            self::CAPABILITY,
-            AICR_SLUG,
-            [ $this, 'render_page' ]
-        );
     }
 
     public function register_settings() {
@@ -101,6 +91,20 @@ class AICR_Settings {
             ? array_intersect( $allowed_acf_types, array_map( 'sanitize_key', $input['acf_field_types'] ) )
             : [];
         $out['acf_field_types'] = array_values( $acf_types );
+
+        // Pricing.
+        $prices = AICR_Usage::default_prices();
+        if ( isset( $input['prices'] ) && is_array( $input['prices'] ) ) {
+            foreach ( $input['prices'] as $model => $vals ) {
+                $model = sanitize_text_field( $model );
+                if ( '' === $model || ! is_array( $vals ) ) { continue; }
+                $prices[ $model ] = [
+                    'input'  => isset( $vals['input'] )  ? max( 0, (float) $vals['input'] )  : 0,
+                    'output' => isset( $vals['output'] ) ? max( 0, (float) $vals['output'] ) : 0,
+                ];
+            }
+        }
+        $out['prices'] = $prices;
 
         return $out;
     }
@@ -249,6 +253,26 @@ class AICR_Settings {
                             <p class="description"><?php esc_html_e( 'Only ACF fields of these types are sent to Claude. URL/Email are usually unchecked to avoid mangling links.', 'ai-content-rewriter' ); ?></p>
                         </td>
                     </tr>
+                </table>
+
+                <h2><?php esc_html_e( 'Pricing (USD per 1,000,000 tokens)', 'ai-content-rewriter' ); ?></h2>
+                <p class="description"><?php esc_html_e( 'Used to estimate spend on the Costs page. Update these whenever Anthropic adjusts prices.', 'ai-content-rewriter' ); ?></p>
+                <table class="form-table" role="presentation">
+                    <?php $prices = isset( $opts['prices'] ) && is_array( $opts['prices'] ) ? $opts['prices'] : AICR_Usage::default_prices(); ?>
+                    <?php foreach ( $prices as $model => $p ) : ?>
+                        <tr>
+                            <th scope="row"><code><?php echo esc_html( $model ); ?></code></th>
+                            <td>
+                                <label><?php esc_html_e( 'Input', 'ai-content-rewriter' ); ?>
+                                    $<input type="number" step="0.01" min="0" name="<?php echo esc_attr( self::OPTION_KEY ); ?>[prices][<?php echo esc_attr( $model ); ?>][input]" value="<?php echo esc_attr( $p['input'] ); ?>" style="width:90px;" />
+                                </label>
+                                &nbsp;
+                                <label><?php esc_html_e( 'Output', 'ai-content-rewriter' ); ?>
+                                    $<input type="number" step="0.01" min="0" name="<?php echo esc_attr( self::OPTION_KEY ); ?>[prices][<?php echo esc_attr( $model ); ?>][output]" value="<?php echo esc_attr( $p['output'] ); ?>" style="width:90px;" />
+                                </label>
+                            </td>
+                        </tr>
+                    <?php endforeach; ?>
                 </table>
 
                 <?php submit_button(); ?>

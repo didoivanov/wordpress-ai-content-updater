@@ -188,6 +188,146 @@ class AICR_Rewriter {
     }
 
     /**
+     * Streaming variant: invokes $emit(event, data) at each step so the UI can show fine-grained progress.
+     * Records usage rows for both successful and failed calls.
+     */
+    public function stream_preview( $post_id, $field_selection = null, $extra_instructions = '', $emit = null ) {
+        if ( ! is_callable( $emit ) ) {
+            $emit = function ( $e, $d = [] ) {};
+        }
+        $post = get_post( $post_id );
+        if ( ! $post ) {
+            $emit( 'error', [ 'message' => __( 'Post not found.', 'ai-content-rewriter' ) ] );
+            return [ 'ok' => false, 'error' => __( 'Post not found.', 'ai-content-rewriter' ) ];
+        }
+
+        $emit( 'status', [ 'message' => __( 'Collecting fields...', 'ai-content-rewriter' ) ] );
+        $payload = $this->build_payload( $post_id, $field_selection );
+        if ( empty( $payload['items'] ) ) {
+            $msg = __( 'Nothing to rewrite. Enable fields in settings or select fields on the edit screen.', 'ai-content-rewriter' );
+            $emit( 'error', [ 'message' => $msg ] );
+            return [ 'ok' => false, 'error' => $msg ];
+        }
+
+        $opts        = $this->settings->get();
+        $system      = $opts['system_prompt'];
+        $user_prompt = $this->settings->get_prompt_for_type( $post->post_type );
+        if ( $extra_instructions ) {
+            $user_prompt .= "\n\n--- ADDITIONAL INSTRUCTIONS ---\n" . $extra_instructions;
+        }
+
+        $total = count( $payload['items'] );
+        $emit( 'status', [ 'message' => sprintf( _n( 'Found %d field to rewrite.', 'Found %d fields to rewrite.', $total, 'ai-content-rewriter' ), $total ) ] );
+
+        $preview    = [];
+        $originals  = [];
+        $meta       = [];
+        $errors     = [];
+        $total_cost = 0.0;
+
+        $index = 0;
+        foreach ( $payload['items'] as $item ) {
+            $index++;
+            $originals[ $item['id'] ] = $item['value'];
+            $meta[ $item['id'] ] = [
+                'label'  => $item['label'],
+                'format' => $item['format'],
+                'origin' => $item['origin'],
+            ];
+
+            $emit( 'field_start', [
+                'index'  => $index,
+                'total'  => $total,
+                'id'     => $item['id'],
+                'label'  => $item['label'],
+                'format' => $item['format'],
+                'chars'  => strlen( $item['value'] ),
+            ] );
+            $emit( 'field_sending', [ 'id' => $item['id'], 'model' => $opts['model'] ] );
+
+            $started = microtime( true );
+            $resp = $this->client->rewrite_field(
+                $system,
+                $user_prompt,
+                $item['label'],
+                $item['format'],
+                $item['value']
+            );
+            $elapsed = microtime( true ) - $started;
+
+            $usage = isset( $resp['usage'] ) ? $resp['usage'] : [ 'input_tokens' => 0, 'output_tokens' => 0, 'cache_creation_tokens' => 0, 'cache_read_tokens' => 0 ];
+            $model_used = isset( $resp['model'] ) ? $resp['model'] : $opts['model'];
+
+            if ( empty( $resp['ok'] ) ) {
+                $err = isset( $resp['error'] ) ? $resp['error'] : 'Unknown error';
+                $errors[ $item['id'] ] = $err;
+                $preview[ $item['id'] ] = $item['value'];
+                AICR_Usage::record( [
+                    'post_id'               => $post_id,
+                    'post_type'             => $post->post_type,
+                    'model'                 => $model_used,
+                    'label'                 => $item['label'],
+                    'input_tokens'          => $usage['input_tokens'],
+                    'output_tokens'         => $usage['output_tokens'],
+                    'cache_creation_tokens' => $usage['cache_creation_tokens'],
+                    'cache_read_tokens'     => $usage['cache_read_tokens'],
+                    'status'                => 'error',
+                    'error_message'         => $err,
+                ] );
+                $emit( 'field_error', [
+                    'id'      => $item['id'],
+                    'message' => $err,
+                    'elapsed' => round( $elapsed, 2 ),
+                ] );
+                continue;
+            }
+
+            $preview[ $item['id'] ] = $resp['text'];
+            $cost = AICR_Usage::compute_cost( $model_used, $usage['input_tokens'], $usage['output_tokens'] );
+            $total_cost += $cost['total'];
+
+            AICR_Usage::record( [
+                'post_id'               => $post_id,
+                'post_type'             => $post->post_type,
+                'model'                 => $model_used,
+                'label'                 => $item['label'],
+                'input_tokens'          => $usage['input_tokens'],
+                'output_tokens'         => $usage['output_tokens'],
+                'cache_creation_tokens' => $usage['cache_creation_tokens'],
+                'cache_read_tokens'     => $usage['cache_read_tokens'],
+                'status'                => 'ok',
+            ] );
+
+            $emit( 'field_done', [
+                'id'             => $item['id'],
+                'elapsed'        => round( $elapsed, 2 ),
+                'input_tokens'   => $usage['input_tokens'],
+                'output_tokens'  => $usage['output_tokens'],
+                'cost'           => round( $cost['total'], 5 ),
+                'preview_chars'  => strlen( $resp['text'] ),
+            ] );
+        }
+
+        $all_failed = count( $errors ) === count( $payload['items'] );
+        if ( $all_failed ) {
+            $first_err = $errors ? reset( $errors ) : __( 'No preview generated.', 'ai-content-rewriter' );
+            $emit( 'error', [ 'message' => $first_err ] );
+            return [ 'ok' => false, 'error' => $first_err ];
+        }
+
+        $emit( 'status', [ 'message' => sprintf( __( 'Done. Estimated cost: $%s', 'ai-content-rewriter' ), number_format( $total_cost, 5 ) ) ] );
+
+        return [
+            'ok'         => true,
+            'preview'    => $preview,
+            'originals'  => $originals,
+            'meta'       => $meta,
+            'errors'     => $errors,
+            'total_cost' => $total_cost,
+        ];
+    }
+
+    /**
      * Send each field to Claude in its own request (using tool-use for guaranteed structured output)
      * and assemble a preview map. Per-field calls eliminate the giant-JSON-roundtrip class of
      * parsing failures, especially with Gutenberg / ACF HTML.
