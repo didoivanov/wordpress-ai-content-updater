@@ -13,8 +13,10 @@ class AICR_Settings {
         return [
             'api_key'          => '',
             'model'            => 'claude-sonnet-4-5',
-            'max_tokens'       => 4096,
+            'max_tokens'       => 16000,
             'temperature'      => 0.7,
+            'auto_retry_truncated' => 1,
+            'type_max_tokens'  => [],
             'enabled_types'    => [ 'page', 'post' ],
             'global_prompt'    => "You are an expert SEO copywriter. Rewrite the provided HTML content to improve clarity, readability, and SEO. Preserve all HTML tags and structure. Do not invent facts. Output only the rewritten HTML, nothing else.",
             'type_prompts'     => [
@@ -63,6 +65,18 @@ class AICR_Settings {
         $out['api_key']     = isset( $input['api_key'] ) ? trim( (string) $input['api_key'] ) : '';
         $out['model']       = isset( $input['model'] ) ? sanitize_text_field( $input['model'] ) : $out['model'];
         $out['max_tokens']  = isset( $input['max_tokens'] ) ? max( 256, min( 64000, (int) $input['max_tokens'] ) ) : $out['max_tokens'];
+        $out['auto_retry_truncated'] = ! empty( $input['auto_retry_truncated'] ) ? 1 : 0;
+        $out['type_max_tokens'] = [];
+        if ( isset( $input['type_max_tokens'] ) && is_array( $input['type_max_tokens'] ) ) {
+            foreach ( $input['type_max_tokens'] as $type => $val ) {
+                $type = sanitize_key( $type );
+                if ( '' === $type ) { continue; }
+                $val = (int) $val;
+                if ( $val > 0 ) {
+                    $out['type_max_tokens'][ $type ] = max( 256, min( 64000, $val ) );
+                }
+            }
+        }
         $out['temperature'] = isset( $input['temperature'] ) ? max( 0, min( 1, (float) $input['temperature'] ) ) : $out['temperature'];
 
         $enabled = isset( $input['enabled_types'] ) && is_array( $input['enabled_types'] )
@@ -120,6 +134,18 @@ class AICR_Settings {
     }
 
     /**
+     * Return the effective max output tokens for a given post type.
+     */
+    public function get_max_tokens_for_type( $post_type ) {
+        $opts = $this->get();
+        $per_type = isset( $opts['type_max_tokens'][ $post_type ] ) ? (int) $opts['type_max_tokens'][ $post_type ] : 0;
+        if ( $per_type > 0 ) {
+            return $per_type;
+        }
+        return (int) $opts['max_tokens'];
+    }
+
+    /**
      * Build the effective prompt for a given post type.
      */
     public function get_prompt_for_type( $post_type ) {
@@ -167,7 +193,23 @@ class AICR_Settings {
                     </tr>
                     <tr>
                         <th scope="row"><label for="aicr_max_tokens"><?php esc_html_e( 'Max output tokens', 'ai-content-rewriter' ); ?></label></th>
-                        <td><input type="number" min="256" max="64000" step="1" id="aicr_max_tokens" name="<?php echo esc_attr( self::OPTION_KEY ); ?>[max_tokens]" value="<?php echo esc_attr( $opts['max_tokens'] ); ?>" /></td>
+                        <td>
+                            <input type="number" min="256" max="64000" step="256" id="aicr_max_tokens" name="<?php echo esc_attr( self::OPTION_KEY ); ?>[max_tokens]" value="<?php echo esc_attr( $opts['max_tokens'] ); ?>" />
+                            <p class="description">
+                                <?php esc_html_e( 'Hard cap on output per field. Range 256–64000. Recommended: 8000–16000 for posts/short pages, 16000–32000 for long Gutenberg/ACF pages, 32000–64000 for very long documents.', 'ai-content-rewriter' ); ?>
+                                <br>
+                                <?php esc_html_e( 'Note: Anthropic charges per output token, so higher caps don’t cost more unless the model actually uses them.', 'ai-content-rewriter' ); ?>
+                            </p>
+                        </td>
+                    </tr>
+                    <tr>
+                        <th scope="row"><?php esc_html_e( 'Auto-retry on truncation', 'ai-content-rewriter' ); ?></th>
+                        <td>
+                            <label>
+                                <input type="checkbox" name="<?php echo esc_attr( self::OPTION_KEY ); ?>[auto_retry_truncated]" value="1" <?php checked( ! empty( $opts['auto_retry_truncated'] ) ); ?> />
+                                <?php esc_html_e( 'If the model stops because of max_tokens, automatically retry the same field once with double the budget (capped at 64000).', 'ai-content-rewriter' ); ?>
+                            </label>
+                        </td>
                     </tr>
                     <tr>
                         <th scope="row"><label for="aicr_temperature"><?php esc_html_e( 'Temperature', 'ai-content-rewriter' ); ?></label></th>
@@ -210,10 +252,12 @@ class AICR_Settings {
                     </tr>
                 </table>
 
-                <h3><?php esc_html_e( 'Per post type prompts', 'ai-content-rewriter' ); ?></h3>
+                <h3><?php esc_html_e( 'Per post type prompts &amp; token caps', 'ai-content-rewriter' ); ?></h3>
+                <p class="description"><?php esc_html_e( 'Per-type max tokens overrides the global cap above. Leave 0 / empty to use the global value.', 'ai-content-rewriter' ); ?></p>
                 <table class="form-table" role="presentation">
                     <?php foreach ( $types as $pt ) :
-                        $val = isset( $opts['type_prompts'][ $pt->name ] ) ? $opts['type_prompts'][ $pt->name ] : ''; ?>
+                        $val = isset( $opts['type_prompts'][ $pt->name ] ) ? $opts['type_prompts'][ $pt->name ] : '';
+                        $mt  = isset( $opts['type_max_tokens'][ $pt->name ] ) ? (int) $opts['type_max_tokens'][ $pt->name ] : 0; ?>
                         <tr>
                             <th scope="row">
                                 <label for="aicr_tp_<?php echo esc_attr( $pt->name ); ?>">
@@ -223,6 +267,12 @@ class AICR_Settings {
                             </th>
                             <td>
                                 <textarea id="aicr_tp_<?php echo esc_attr( $pt->name ); ?>" name="<?php echo esc_attr( self::OPTION_KEY ); ?>[type_prompts][<?php echo esc_attr( $pt->name ); ?>]" rows="4" class="large-text code"><?php echo esc_textarea( $val ); ?></textarea>
+                                <p>
+                                    <label>
+                                        <?php esc_html_e( 'Max output tokens for this type:', 'ai-content-rewriter' ); ?>
+                                        <input type="number" min="0" max="64000" step="256" name="<?php echo esc_attr( self::OPTION_KEY ); ?>[type_max_tokens][<?php echo esc_attr( $pt->name ); ?>]" value="<?php echo esc_attr( $mt ?: '' ); ?>" placeholder="<?php esc_attr_e( 'global default', 'ai-content-rewriter' ); ?>" style="width:120px;" />
+                                    </label>
+                                </p>
                             </td>
                         </tr>
                     <?php endforeach; ?>

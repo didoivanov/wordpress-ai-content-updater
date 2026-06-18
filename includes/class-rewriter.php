@@ -216,8 +216,11 @@ class AICR_Rewriter {
             $user_prompt .= "\n\n--- ADDITIONAL INSTRUCTIONS ---\n" . $extra_instructions;
         }
 
+        $base_max_tokens = $this->settings->get_max_tokens_for_type( $post->post_type );
+        $auto_retry      = ! empty( $opts['auto_retry_truncated'] );
         $total = count( $payload['items'] );
         $emit( 'status', [ 'message' => sprintf( _n( 'Found %d field to rewrite.', 'Found %d fields to rewrite.', $total, 'ai-content-rewriter' ), $total ) ] );
+        $emit( 'status', [ 'message' => sprintf( __( 'Max output tokens per field: %d (auto-retry on truncation: %s).', 'ai-content-rewriter' ), $base_max_tokens, $auto_retry ? 'on' : 'off' ) ] );
 
         $preview    = [];
         $originals  = [];
@@ -243,7 +246,7 @@ class AICR_Rewriter {
                 'format' => $item['format'],
                 'chars'  => strlen( $item['value'] ),
             ] );
-            $emit( 'field_sending', [ 'id' => $item['id'], 'model' => $opts['model'] ] );
+            $emit( 'field_sending', [ 'id' => $item['id'], 'model' => $opts['model'], 'max_tokens' => $base_max_tokens ] );
 
             $started = microtime( true );
             $resp = $this->client->rewrite_field(
@@ -251,12 +254,43 @@ class AICR_Rewriter {
                 $user_prompt,
                 $item['label'],
                 $item['format'],
-                $item['value']
+                $item['value'],
+                $base_max_tokens
             );
             $elapsed = microtime( true ) - $started;
 
+            // Auto-retry on truncation (either empty output with stop_reason=max_tokens, or partial output).
+            $stop_reason = isset( $resp['stop_reason'] ) ? $resp['stop_reason'] : '';
+            $truncated = ( 'max_tokens' === $stop_reason );
+            if ( $truncated && $auto_retry && $base_max_tokens < 64000 ) {
+                $bigger = min( 64000, $base_max_tokens * 2 );
+                $emit( 'status', [ 'message' => sprintf( __( '  ↻ Truncated at %d tokens, retrying with %d…', 'ai-content-rewriter' ), $base_max_tokens, $bigger ) ] );
+                $started2 = microtime( true );
+                $resp = $this->client->rewrite_field(
+                    $system,
+                    $user_prompt,
+                    $item['label'],
+                    $item['format'],
+                    $item['value'],
+                    $bigger
+                );
+                $elapsed = ( $elapsed ) + ( microtime( true ) - $started2 );
+                $stop_reason = isset( $resp['stop_reason'] ) ? $resp['stop_reason'] : '';
+            }
+
             $usage = isset( $resp['usage'] ) ? $resp['usage'] : [ 'input_tokens' => 0, 'output_tokens' => 0, 'cache_creation_tokens' => 0, 'cache_read_tokens' => 0 ];
             $model_used = isset( $resp['model'] ) ? $resp['model'] : $opts['model'];
+
+            // If the response is technically "ok" but truncated, treat as failure to avoid saving half-rewritten content.
+            $still_truncated = ! empty( $resp['ok'] ) && 'max_tokens' === $stop_reason;
+            if ( $still_truncated ) {
+                $resp['ok'] = false;
+                $resp['error'] = sprintf(
+                    /* translators: %d max_tokens */
+                    __( 'Response was truncated by max_tokens (%d). Raise the per-post-type or global Max output tokens, or enable Auto-retry on truncation.', 'ai-content-rewriter' ),
+                    isset( $resp['max_tokens'] ) ? (int) $resp['max_tokens'] : $base_max_tokens
+                );
+            }
 
             if ( empty( $resp['ok'] ) ) {
                 $err = isset( $resp['error'] ) ? $resp['error'] : 'Unknown error';

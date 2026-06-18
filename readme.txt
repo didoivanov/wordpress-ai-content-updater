@@ -4,7 +4,7 @@ Tags: ai, anthropic, claude, content, rewriter, acf
 Requires at least: 6.0
 Tested up to: 6.6
 Requires PHP: 7.4
-Stable tag: 0.3.0
+Stable tag: 0.4.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -25,6 +25,15 @@ Rewrite WordPress pages, posts and custom post types (including ACF Pro flexible
 3. Visit Settings → AI Content Rewriter and add your Anthropic API key.
 
 == Changelog ==
+
+= 0.4.0 =
+* Fix: "Empty response from Anthropic (stop_reason: max_tokens)" error on long fields.
+* New: Default max tokens raised from 4096 to 16000 (Claude Sonnet/Opus 4.x support much larger outputs).
+* New: Per-post-type max tokens override, next to the per-type prompt.
+* New: Auto-retry on truncated responses with 2x token budget (capped at 64000). Toggle in Configuration.
+* Fix: Partial (truncated) responses are now treated as failures instead of silently saving half-rewritten content.
+* UI: Live progress log now shows the max tokens setting used per field.
+* UI: Friendlier error messages when output is truncated, with a hint to raise the limit.
 
 = 0.3.0 =
 * New: Top-level admin menu "AI Rewriter" with Configuration + Costs subpages.

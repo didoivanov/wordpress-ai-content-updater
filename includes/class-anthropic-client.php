@@ -28,12 +28,15 @@ class AICR_Anthropic_Client {
      * @param string $value   The actual content to rewrite.
      * @return array{ok:bool,text?:string,error?:string,raw?:array}
      */
-    public function rewrite_field( $system, $prompt, $label, $format, $value ) {
+    public function rewrite_field( $system, $prompt, $label, $format, $value, $max_tokens_override = 0 ) {
         $opts = $this->settings->get();
         $api_key = isset( $opts['api_key'] ) ? trim( $opts['api_key'] ) : '';
         if ( '' === $api_key ) {
             return [ 'ok' => false, 'error' => __( 'Anthropic API key is not configured.', 'ai-content-rewriter' ) ];
         }
+        $max_tokens = $max_tokens_override > 0
+            ? min( 64000, max( 256, (int) $max_tokens_override ) )
+            : (int) $opts['max_tokens'];
 
         $format_note = ( 'html' === $format )
             ? 'The content is HTML. Preserve ALL HTML tags, attributes, Gutenberg block comments (lines like <!-- wp:... --> and <!-- /wp:... -->), shortcodes, and overall structure exactly. Only change the human-readable text inside.'
@@ -65,7 +68,7 @@ class AICR_Anthropic_Client {
 
         $body = [
             'model'       => $opts['model'],
-            'max_tokens'  => (int) $opts['max_tokens'],
+            'max_tokens'  => $max_tokens,
             'temperature' => (float) $opts['temperature'],
             'system'      => $system,
             'tools'       => [ $tool ],
@@ -127,18 +130,38 @@ class AICR_Anthropic_Client {
             'cache_read_tokens'     => isset( $usage['cache_read_input_tokens'] ) ? (int) $usage['cache_read_input_tokens'] : 0,
         ];
 
+        $stop_reason = isset( $decoded['stop_reason'] ) ? $decoded['stop_reason'] : 'unknown';
+
         if ( '' === $text ) {
-            $stop = isset( $decoded['stop_reason'] ) ? $decoded['stop_reason'] : 'unknown';
+            if ( 'max_tokens' === $stop_reason ) {
+                $err = sprintf(
+                    /* translators: %d max_tokens value */
+                    __( 'Output limit hit before any content was produced (max_tokens=%d). Raise the per-post-type or global Max output tokens, or enable Auto-retry on truncation.', 'ai-content-rewriter' ),
+                    $max_tokens
+                );
+            } else {
+                $err = sprintf( __( 'Empty response from Anthropic (stop_reason: %s).', 'ai-content-rewriter' ), $stop_reason );
+            }
             return [
-                'ok'    => false,
-                'error' => sprintf( __( 'Empty response from Anthropic (stop_reason: %s). Try lowering input size or raising max tokens.', 'ai-content-rewriter' ), $stop ),
-                'raw'   => $decoded,
-                'usage' => $usage_norm,
-                'model' => $opts['model'],
+                'ok'          => false,
+                'error'       => $err,
+                'stop_reason' => $stop_reason,
+                'raw'         => $decoded,
+                'usage'       => $usage_norm,
+                'model'       => $opts['model'],
+                'max_tokens'  => $max_tokens,
             ];
         }
 
-        return [ 'ok' => true, 'text' => $text, 'raw' => $decoded, 'usage' => $usage_norm, 'model' => $opts['model'] ];
+        return [
+            'ok'          => true,
+            'text'        => $text,
+            'raw'         => $decoded,
+            'usage'       => $usage_norm,
+            'model'       => $opts['model'],
+            'stop_reason' => $stop_reason,
+            'max_tokens'  => $max_tokens,
+        ];
     }
 
     /**

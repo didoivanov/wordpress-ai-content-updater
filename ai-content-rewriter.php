@@ -3,7 +3,7 @@
  * Plugin Name:       AI Content Rewriter
  * Plugin URI:        https://github.com/didoivanov/wordpress-ai-content-updater
  * Description:       Rewrite WordPress pages, posts and custom post types (including ACF Pro flexible content / repeaters) with Anthropic Claude. Per-CPT prompts, preview & approve workflow, self-updating from GitHub.
- * Version:           0.3.0
+ * Version:           0.4.0
  * Requires at least: 6.0
  * Requires PHP:      7.4
  * Author:            K Web ltd
@@ -20,7 +20,7 @@ if ( ! defined( 'ABSPATH' ) ) {
     exit;
 }
 
-define( 'AICR_VERSION', '0.3.0' );
+define( 'AICR_VERSION', '0.4.0' );
 define( 'AICR_FILE', __FILE__ );
 define( 'AICR_PATH', plugin_dir_path( __FILE__ ) );
 define( 'AICR_URL', plugin_dir_url( __FILE__ ) );
